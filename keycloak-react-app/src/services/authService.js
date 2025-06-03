@@ -1,0 +1,479 @@
+import axios from "axios";
+
+// Auth service configuration
+const API_URL = "http://localhost:3001/api/auth";
+
+// Store token in memory (more secure than localStorage)
+let authToken = null;
+
+// Create axios instance with interceptors for better error handling
+const api = axios.create({
+  baseURL: API_URL,
+  withCredentials: true,
+});
+
+// Add request interceptor for authentication and logging
+api.interceptors.request.use(
+  (config) => {
+    console.debug(`Auth request: ${config.method.toUpperCase()} ${config.url}`);
+
+    // Add authorization header if we have a token
+    if (authToken) {
+      // Handle both token formats (object with access_token or direct string token)
+      const tokenValue = authToken.access_token || authToken;
+      console.log("Adding auth token to request:", config.url);
+      config.headers.Authorization = `Bearer ${tokenValue}`;
+    } else {
+      console.log("No auth token available for request:", config.url);
+    }
+
+    return config;
+  },
+  (error) => {
+    console.error("Auth request error:", error);
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor for logging and error handling
+api.interceptors.response.use(
+  (response) => {
+    console.debug(
+      `Auth response: ${response.status} from ${response.config.url}`
+    );
+    return response;
+  },
+  (error) => {
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error(
+        `Auth error ${error.response.status}: ${JSON.stringify(
+          error.response.data
+        )}`
+      );
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error("Auth error: No response received", error.request);
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      console.error("Auth error:", error.message);
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Check if user is authenticated
+export const checkAuth = async () => {
+  try {
+    console.log(
+      "Checking authentication status, token:",
+      authToken ? "exists" : "none"
+    );
+
+    // If we have a token in memory, include it in the request
+    const response = await api.get("/check");
+    console.log("Auth check response:", response.data);
+
+    // If we're authenticated but don't have a token in memory,
+    // this means our session is valid but we need to refresh the frontend state
+    if (response.data.authenticated && !authToken) {
+      console.log("Authenticated but no token in memory");
+      // We could potentially refresh the token here if needed
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error("Auth check error:", error);
+    return { authenticated: false };
+  }
+};
+
+// Login with username and password
+export const login = async (username, password) => {
+  try {
+    console.log("Attempting login with username:", username);
+
+    // Try Keycloak login first, then fall back to simple JWT if it fails
+    try {
+      console.log("Trying Keycloak login...");
+      const keycloakResponse = await api.post("/login", { username, password });
+      console.log(
+        "Keycloak login successful, response:",
+        keycloakResponse.data
+      );
+
+      // Store token in memory
+      if (keycloakResponse.data && keycloakResponse.data.access_token) {
+        console.log("Storing Keycloak access token in memory");
+        authToken = keycloakResponse.data.access_token;
+
+        // Log the first few characters of the token for debugging
+        const tokenPreview = authToken.substring(0, 20) + "...";
+        console.log("Token preview:", tokenPreview);
+
+        return keycloakResponse.data;
+      }
+    } catch (keycloakError) {
+      console.log(
+        "Keycloak login failed, trying simple JWT:",
+        keycloakError.message
+      );
+      // Fall through to simple JWT login
+    }
+
+    // If Keycloak login fails, try simple JWT login
+    console.log("Trying simple JWT login...");
+    const response = await api.post("/simple/login", { username, password });
+    console.log("Simple JWT login successful, response:", response.data);
+
+    // Store token in memory
+    if (response.data && response.data.access_token) {
+      console.log("Storing simple JWT access token in memory");
+      authToken = response.data.access_token;
+
+      // Log the first few characters of the token for debugging
+      const tokenPreview = authToken.substring(0, 20) + "...";
+      console.log("Token preview:", tokenPreview);
+    } else {
+      console.error("No access token found in response");
+    }
+
+    return response.data;
+  } catch (error) {
+    // Handle specific error cases
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      if (status === 401) {
+        console.error("Login failed: Invalid credentials");
+        throw {
+          error: "invalid_grant",
+          error_description: "Invalid username or password",
+        };
+      } else if (status === 403) {
+        console.error("Login failed: Access forbidden", data);
+        throw {
+          error: "access_denied",
+          error_description:
+            "Access denied. Direct grant may not be enabled for this client.",
+        };
+      } else if (status === 400) {
+        console.error("Login failed: Bad request", data);
+        throw (
+          data || {
+            error: "bad_request",
+            error_description: "Invalid request parameters",
+          }
+        );
+      } else {
+        console.error(`Login failed: Server error (${status})`, data);
+        throw (
+          data || {
+            error: "server_error",
+            error_description: `Server error (${status})`,
+          }
+        );
+      }
+    } else if (error.request) {
+      console.error("Login failed: No response from server");
+      throw {
+        error: "network_error",
+        error_description: "Could not connect to authentication server",
+      };
+    } else {
+      console.error("Login error:", error.message);
+      throw {
+        error: "unknown_error",
+        error_description: error.message || "Authentication failed",
+      };
+    }
+  }
+};
+
+// Logout
+export const logout = async () => {
+  try {
+    // Only attempt to call the logout endpoint if we have a token
+    if (authToken) {
+      const response = await api.post("/logout");
+      console.log("Logout successful");
+    }
+
+    // Clear token from memory
+    authToken = null;
+
+    // Clear any local state if needed
+    localStorage.removeItem("auth_timestamp");
+
+    // Redirect to home page
+    window.location.href = "/";
+    return true;
+  } catch (error) {
+    if (error.response) {
+      const status = error.response.status;
+      console.error(`Logout error (${status}):`, error.response.data);
+    } else {
+      console.error("Logout error:", error.message);
+    }
+
+    // Even if logout fails on the server, we'll redirect to home
+    // This ensures the user isn't stuck if there's a server issue
+    window.location.href = "/";
+    return false;
+  }
+};
+
+// Direct user registration with Keycloak
+export const registerUser = async (userData) => {
+  try {
+    // Log user registration attempt without exposing password
+    console.log("Registering user:", {
+      username: userData.username,
+      email: userData.email,
+      firstName: userData.firstName,
+      lastName: userData.lastName,
+    });
+
+    const response = await api.post("/register/direct", userData);
+    console.log("Registration successful");
+    return response.data;
+  } catch (error) {
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      console.error(`Registration error (${status}):`, data);
+
+      // Handle specific error cases
+      if (status === 409) {
+        // Conflict - username or email already exists
+        if (data.error_description?.includes("username")) {
+          throw {
+            error: "username_exists",
+            error_description:
+              "Username already exists. Please choose another username.",
+          };
+        } else if (data.error_description?.includes("email")) {
+          throw {
+            error: "email_exists",
+            error_description:
+              "Email already in use. Please use another email address.",
+          };
+        } else {
+          throw (
+            data || {
+              error: "conflict",
+              error_description: "User already exists.",
+            }
+          );
+        }
+      } else if (status === 400) {
+        // Bad request - validation error
+        throw (
+          data || {
+            error: "validation_error",
+            error_description:
+              "Invalid registration data. Please check your inputs.",
+          }
+        );
+      } else if (status === 403) {
+        // Forbidden - registration not enabled
+        throw {
+          error: "registration_not_enabled",
+          error_description:
+            "Registration is not enabled in this Keycloak realm.",
+        };
+      } else {
+        throw (
+          data || {
+            error: "server_error",
+            error_description: `Server error (${status}). Please try again later.`,
+          }
+        );
+      }
+    } else if (error.request) {
+      console.error("Registration error: No response from server");
+      throw {
+        error: "network_error",
+        error_description:
+          "Could not connect to authentication server. Please check your internet connection.",
+      };
+    } else {
+      console.error("Registration error:", error.message);
+      throw {
+        error: "unknown_error",
+        error_description:
+          error.message || "Registration failed. Please try again later.",
+      };
+    }
+  }
+};
+
+// Get registration URL (legacy method - kept for compatibility)
+export const getRegistrationUrl = async () => {
+  try {
+    const response = await api.get("/register");
+    console.log("Registration URL obtained:", response.data);
+    return response.data;
+  } catch (error) {
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      console.error(`Get registration URL error (${status}):`, data);
+      throw {
+        error: data.error || "registration_error",
+        error_description:
+          data.error_description ||
+          `Failed to get registration URL (${status})`,
+        status,
+      };
+    } else {
+      console.error("Get registration URL error:", error.message);
+      throw {
+        error: "network_error",
+        error_description: "Could not connect to authentication server",
+      };
+    }
+  }
+};
+
+// Redirect to registration page (legacy method - kept for compatibility)
+export const register = async () => {
+  try {
+    // Check if registration is enabled in Keycloak realm
+    const registrationData = await getRegistrationUrl();
+
+    if (!registrationData.registrationUrl) {
+      throw {
+        error: "registration_not_enabled",
+        error_description: "Registration is not enabled in this Keycloak realm",
+      };
+    }
+
+    // Redirect to Keycloak registration page
+    window.location.href = registrationData.registrationUrl;
+    return true;
+  } catch (error) {
+    console.error("Registration error:", error);
+    throw error;
+  }
+};
+
+// Get user profile from auth system (tries both Keycloak and Simple JWT)
+export const getUserProfile = async () => {
+  try {
+    console.log("Fetching user profile");
+    console.log("Current auth token:", authToken ? "Token exists" : "No token");
+
+    // Make sure we have a token before trying to get the profile
+    if (!authToken) {
+      console.error("No authentication token available");
+      throw new Error("Not authenticated");
+    }
+
+    // First try the Keycloak endpoint
+    try {
+      console.log("Trying Keycloak endpoint /me");
+      const response = await api.get("/me");
+      console.log(
+        "User profile fetched successfully from Keycloak:",
+        response.data
+      );
+      return response.data;
+    } catch (keycloakError) {
+      console.log(
+        "Keycloak profile fetch failed, trying simple JWT endpoint",
+        keycloakError
+      );
+
+      // If Keycloak fails, try the simple JWT endpoint
+      const response = await api.get("/simple/me");
+      console.log(
+        "User profile fetched successfully from simple JWT:",
+        response.data
+      );
+      return response.data;
+    }
+  } catch (error) {
+    if (error.response) {
+      const status = error.response.status;
+      const data = error.response.data;
+
+      console.error(`Get profile error (${status}):`, data);
+
+      if (status === 401) {
+        // Token expired or invalid
+        authToken = null;
+        throw {
+          error: "unauthorized",
+          error_description: "Session expired. Please log in again.",
+        };
+      } else {
+        throw (
+          data || {
+            error: "profile_error",
+            error_description: `Failed to get user profile (${status})`,
+          }
+        );
+      }
+    } else if (error.request) {
+      console.error("Get profile error: No response from server");
+      throw {
+        error: "network_error",
+        error_description: "Could not connect to authentication server",
+      };
+    } else {
+      console.error("Get profile error:", error.message);
+      throw {
+        error: "unknown_error",
+        error_description: error.message || "Failed to get user profile",
+      };
+    }
+  }
+};
+
+// Refresh token
+export const refreshToken = async () => {
+  try {
+    // Only attempt to refresh if we have a token with refresh_token
+    if (!authToken || !authToken.refresh_token) {
+      throw {
+        error: "no_refresh_token",
+        error_description: "No refresh token available",
+      };
+    }
+
+    // Send refresh token to server
+    const response = await api.post("/refresh", {
+      refresh_token: authToken.refresh_token,
+    });
+
+    // Update token in memory
+    if (response.data.token) {
+      authToken = response.data.token;
+    }
+
+    return response.data;
+  } catch (error) {
+    console.error("Token refresh error:", error);
+
+    // If refresh fails, clear token and force re-login
+    if (error.response && error.response.status === 401) {
+      authToken = null;
+    }
+
+    throw error;
+  }
+};
+
+export default {
+  checkAuth,
+  login,
+  logout,
+  register,
+  refreshToken,
+  getUserProfile,
+};

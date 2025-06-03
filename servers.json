@@ -1,0 +1,14 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "Keycloak DB",
+            "Group": "Servers",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "keycloak",
+            "Username": "keycloak",
+            "Password": "password",
+            "SSLMode": "prefer"
+        }
+    }
+}
