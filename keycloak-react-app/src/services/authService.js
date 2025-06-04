@@ -63,31 +63,6 @@ api.interceptors.response.use(
   }
 );
 
-// Check if user is authenticated
-export const checkAuth = async () => {
-  try {
-    console.log(
-      "Checking authentication status, token:",
-      authToken ? "exists" : "none"
-    );
-
-    // If we have a token in memory, include it in the request
-    const response = await api.get("/check");
-    console.log("Auth check response:", response.data);
-
-    // If we're authenticated but don't have a token in memory,
-    // this means our session is valid but we need to refresh the frontend state
-    if (response.data.authenticated && !authToken) {
-      console.log("Authenticated but no token in memory");
-      // We could potentially refresh the token here if needed
-    }
-
-    return response.data;
-  } catch (error) {
-    console.error("Auth check error:", error);
-    return { authenticated: false };
-  }
-};
 
 // Login with username and password
 export const login = async (username, password) => {
@@ -470,7 +445,6 @@ export const refreshToken = async () => {
 };
 
 export default {
-  checkAuth,
   login,
   logout,
   register,
