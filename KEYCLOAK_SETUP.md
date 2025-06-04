@@ -48,13 +48,17 @@ After creating the client, configure the following settings:
 2. Copy the "Secret" value - this is your `KEYCLOAK_CLIENT_SECRET`
 3. Update this value in your `.env` files
 
-## 5. Enable User Registration
+## 5. Configure Realm Login Settings
 
-1. Go to "Realm Settings" in the left sidebar
-2. Click on the "Login" tab
-3. Set "User Registration" to ON
-4. Set "Email as Username" based on your preference
-5. Click "Save"
+1. Go to "Realm Settings" in the left sidebar.
+2. Click on the "Login" tab.
+3. Configure the following settings:
+   - **User registration**: Set to ON to allow users to create their own accounts.
+   - **Login with email**: Set to ON if you want users to be able to log in using their email address instead of just their username.
+   - **Forgot password / Reset password**: Ensure "Reset password allowed" (or similar wording depending on your Keycloak version) is set to ON to allow users to reset their passwords.
+   - **Remember me**: Set to ON to enable the "Remember me" functionality on the login page.
+   - **Email as username**: Set this based on your preference. If ON, the email address will be used as the username.
+4. Click "Save" to apply the changes.
 
 ## 6. Configure Service Account Roles
 
