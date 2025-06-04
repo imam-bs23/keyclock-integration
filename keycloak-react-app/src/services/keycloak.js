@@ -47,19 +47,6 @@ export const isAuthenticated = () => {
   return keycloak.authenticated;
 };
 
-// Get user profile
-// export const getUserProfile = () => {
-//   if (keycloak.authenticated && keycloak.tokenParsed) {
-//     return {
-//       username: keycloak.tokenParsed.preferred_username || "Not provided",
-//       name: keycloak.tokenParsed.name || "Not provided",
-//       email: keycloak.tokenParsed.email || "Not provided",
-//       emailVerified: keycloak.tokenParsed.email_verified ? "Yes" : "No",
-//     };
-//   }
-//   return null;
-// };
-
 // Get token
 export const getToken = () => {
   return keycloak.token;

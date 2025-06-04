@@ -3,8 +3,10 @@ import axios from "axios";
 // Auth service configuration
 const API_URL = "http://localhost:3001/api/auth";
 
-// Store token in memory (more secure than localStorage)
-let authToken = null;
+// Attempt to load token from localStorage to persist session
+// The in-memory authToken is used by the interceptor.
+// localStorage is the source of truth on app load.
+let authToken = localStorage.getItem("access_token");
 
 // Create axios instance with interceptors for better error handling
 const api = axios.create({
@@ -63,7 +65,6 @@ api.interceptors.response.use(
   }
 );
 
-
 // Login with username and password
 export const login = async (username, password) => {
   try {
@@ -78,14 +79,36 @@ export const login = async (username, password) => {
         keycloakResponse.data
       );
 
-      // Store token in memory
+      // Store tokens in memory and localStorage
       if (keycloakResponse.data && keycloakResponse.data.access_token) {
-        console.log("Storing Keycloak access token in memory");
+        console.log("Storing Keycloak tokens");
         authToken = keycloakResponse.data.access_token;
+
+        // Store tokens in localStorage
+        localStorage.setItem(
+          "access_token",
+          keycloakResponse.data.access_token
+        );
+        if (keycloakResponse.data.refresh_token) {
+          localStorage.setItem(
+            "refresh_token",
+            keycloakResponse.data.refresh_token
+          );
+        }
+
+        // Store token expiration if available
+        if (keycloakResponse.data.expires_in) {
+          const expiresAt =
+            Date.now() + keycloakResponse.data.expires_in * 1000;
+          localStorage.setItem("expires_at", expiresAt.toString());
+        }
 
         // Log the first few characters of the token for debugging
         const tokenPreview = authToken.substring(0, 20) + "...";
-        console.log("Token preview:", tokenPreview);
+        console.log("Access token preview:", tokenPreview);
+        if (keycloakResponse.data.refresh_token) {
+          console.log("Refresh token stored");
+        }
 
         return keycloakResponse.data;
       }
@@ -96,25 +119,6 @@ export const login = async (username, password) => {
       );
       // Fall through to simple JWT login
     }
-
-    // If Keycloak login fails, try simple JWT login
-    console.log("Trying simple JWT login...");
-    const response = await api.post("/simple/login", { username, password });
-    console.log("Simple JWT login successful, response:", response.data);
-
-    // Store token in memory
-    if (response.data && response.data.access_token) {
-      console.log("Storing simple JWT access token in memory");
-      authToken = response.data.access_token;
-
-      // Log the first few characters of the token for debugging
-      const tokenPreview = authToken.substring(0, 20) + "...";
-      console.log("Token preview:", tokenPreview);
-    } else {
-      console.error("No access token found in response");
-    }
-
-    return response.data;
   } catch (error) {
     // Handle specific error cases
     if (error.response) {
@@ -170,31 +174,40 @@ export const login = async (username, password) => {
 // Logout
 export const logout = async () => {
   try {
-    // Only attempt to call the logout endpoint if we have a token
-    if (authToken) {
-      const response = await api.post("/logout");
-      console.log("Logout successful");
+    // Get the refresh token from storage or current session
+    const refreshToken = localStorage.getItem("refresh_token");
+
+    // Only attempt to call the logout endpoint if we have a refresh token
+    if (refreshToken) {
+      try {
+        const response = await api.post("/logout", {
+          refresh_token: refreshToken,
+        });
+        console.log(`Logout successful:`, response.data);
+      } catch (error) {
+        // Log the error but continue with client-side cleanup
+        console.error("Logout API error:", error.message);
+      }
     }
 
-    // Clear token from memory
+    // Clear tokens and auth data from memory and storage
     authToken = null;
-
-    // Clear any local state if needed
+    localStorage.removeItem("refresh_token");
     localStorage.removeItem("auth_timestamp");
+
+    // Clear any other auth-related data
+    sessionStorage.clear();
 
     // Redirect to home page
     window.location.href = "/";
     return true;
   } catch (error) {
-    if (error.response) {
-      const status = error.response.status;
-      console.error(`Logout error (${status}):`, error.response.data);
-    } else {
-      console.error("Logout error:", error.message);
-    }
+    console.error("Logout error:", error);
 
-    // Even if logout fails on the server, we'll redirect to home
-    // This ensures the user isn't stuck if there's a server issue
+    // Even if logout fails, ensure we clean up and redirect
+    authToken = null;
+    localStorage.removeItem("refresh_token");
+    localStorage.removeItem("auth_timestamp");
     window.location.href = "/";
     return false;
   }
@@ -211,7 +224,7 @@ export const registerUser = async (userData) => {
       lastName: userData.lastName,
     });
 
-    const response = await api.post("/register/direct", userData);
+    const response = await api.post("/register", userData);
     console.log("Registration successful");
     return response.data;
   } catch (error) {
@@ -286,57 +299,6 @@ export const registerUser = async (userData) => {
   }
 };
 
-// Get registration URL (legacy method - kept for compatibility)
-export const getRegistrationUrl = async () => {
-  try {
-    const response = await api.get("/register");
-    console.log("Registration URL obtained:", response.data);
-    return response.data;
-  } catch (error) {
-    if (error.response) {
-      const status = error.response.status;
-      const data = error.response.data;
-
-      console.error(`Get registration URL error (${status}):`, data);
-      throw {
-        error: data.error || "registration_error",
-        error_description:
-          data.error_description ||
-          `Failed to get registration URL (${status})`,
-        status,
-      };
-    } else {
-      console.error("Get registration URL error:", error.message);
-      throw {
-        error: "network_error",
-        error_description: "Could not connect to authentication server",
-      };
-    }
-  }
-};
-
-// Redirect to registration page (legacy method - kept for compatibility)
-export const register = async () => {
-  try {
-    // Check if registration is enabled in Keycloak realm
-    const registrationData = await getRegistrationUrl();
-
-    if (!registrationData.registrationUrl) {
-      throw {
-        error: "registration_not_enabled",
-        error_description: "Registration is not enabled in this Keycloak realm",
-      };
-    }
-
-    // Redirect to Keycloak registration page
-    window.location.href = registrationData.registrationUrl;
-    return true;
-  } catch (error) {
-    console.error("Registration error:", error);
-    throw error;
-  }
-};
-
 // Get user profile from auth system (tries both Keycloak and Simple JWT)
 export const getUserProfile = async () => {
   try {
@@ -363,14 +325,6 @@ export const getUserProfile = async () => {
         "Keycloak profile fetch failed, trying simple JWT endpoint",
         keycloakError
       );
-
-      // If Keycloak fails, try the simple JWT endpoint
-      const response = await api.get("/simple/me");
-      console.log(
-        "User profile fetched successfully from simple JWT:",
-        response.data
-      );
-      return response.data;
     }
   } catch (error) {
     if (error.response) {
@@ -447,7 +401,7 @@ export const refreshToken = async () => {
 export default {
   login,
   logout,
-  register,
+  registerUser,
   refreshToken,
   getUserProfile,
 };

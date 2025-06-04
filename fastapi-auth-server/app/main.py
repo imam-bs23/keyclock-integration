@@ -51,21 +51,11 @@ try:
         server_url=KEYCLOAK_SERVER_URL,
         username=KEYCLOAK_ADMIN_USERNAME,
         password=KEYCLOAK_ADMIN_PASSWORD,
-        realm_name="myrealm",  # Admin operations are typically performed in master realm
+        realm_name=KEYCLOAK_REALM,  
         client_id="admin-cli",  # Use admin-cli for admin operations
         verify=True
     )
-    
-    # Set the target realm for operations
-    keycloak_admin.realm_name = KEYCLOAK_REALM
-    
-    # Test connection by getting realm info
-    try:
-        realm_info = keycloak_admin.get_realm(KEYCLOAK_REALM)
-        logger.info(f"Successfully connected to Keycloak admin API and verified realm {KEYCLOAK_REALM} exists")
-    except Exception as e:
-        logger.warning(f"Connected to Keycloak admin API but realm {KEYCLOAK_REALM} might not exist: {str(e)}")
-    
+
 except Exception as e:
     logger.error(f"Failed to connect to Keycloak admin API: {str(e)}")
     keycloak_admin = None
@@ -140,7 +130,7 @@ class UserInfo(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
-@app.post("/api/auth/register/direct", response_model=dict)
+@app.post("/api/auth/register", response_model=dict)
 async def register_user(user_data: UserRegistration):
     """Register a new user directly in Keycloak"""
     logger.info(f"Attempting to register user: {user_data.username}")
@@ -148,31 +138,15 @@ async def register_user(user_data: UserRegistration):
     if not keycloak_admin:
         raise HTTPException(status_code=503, detail="Keycloak admin client not available")
     
-    try:
-        # Make sure we're targeting the correct realm
-        current_realm = keycloak_admin.realm_name
-        logger.info(f"Current admin realm before user registration: {current_realm}")
-        
-        # Explicitly set the realm to myrealm for user registration
-        keycloak_admin.realm_name = KEYCLOAK_REALM
-        logger.info(f"Set admin realm for user registration to: {keycloak_admin.realm_name}")
-        
+    try:        
         # Check if user already exists
         try:
-            existing_users = keycloak_admin.get_users({"username": user_data.username})
+            existing_users = keycloak_admin.get_users({"username": user_data.username, "email": user_data.email})
             if existing_users:
-                logger.warning(f"User with username {user_data.username} already exists")
+                logger.warning(f"User with username {user_data.username} or email {user_data.email} already exists")
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="User with this username already exists"
-                )
-                
-            existing_users = keycloak_admin.get_users({"email": user_data.email})
-            if existing_users:
-                logger.warning(f"User with email {user_data.email} already exists")
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="User with this email already exists"
+                    detail="User with this username or email already exists"
                 )
         except KeycloakError as e:
             logger.warning(f"Could not check for existing users: {str(e)}")
@@ -195,23 +169,10 @@ async def register_user(user_data: UserRegistration):
 
         logger.debug(f'User payload prepared: {user_data.username}')
         
-        # Make sure we're targeting the correct realm
-        keycloak_admin.realm_name = KEYCLOAK_REALM  # Explicitly set the realm name again to ensure it's correct
-        current_realm = keycloak_admin.realm_name
-        logger.info(f"Creating user in realm: {current_realm}")
-        
         # Create user in Keycloak
         user_id = keycloak_admin.create_user(user_payload)
-        logger.info(f"User created successfully with ID: {user_id} in realm {current_realm}")
-        
-        # Set password for the user
-        keycloak_admin.set_user_password(user_id, user_data.password, temporary=False)
-        logger.info(f"Password set for user with ID: {user_id}")
-        
-        # Enable the user account
-        keycloak_admin.update_user(user_id, {"enabled": True, "emailVerified": True})
-        logger.info(f"User account enabled and email verified for user with ID: {user_id}")
-        
+        logger.info(f"User created successfully with ID: {user_id}")
+
         return {
             "message": "User registered successfully",
             "user_id": user_id
@@ -375,9 +336,7 @@ async def get_user_profile(request: Request):
         )
 
 @app.post("/api/auth/logout")
-async def logout_user(
-    refresh_data: RefreshTokenRequest,
-):
+async def logout_user(refresh_data: RefreshTokenRequest):
     """Logout user and invalidate tokens"""
     try:
         # Logout from Keycloak
@@ -397,44 +356,3 @@ async def logout_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during logout"
         )
-
-
-@app.post("/api/auth/debug/update-realm")
-async def update_realm_settings():
-    """Debug endpoint to update realm settings"""
-    try:
-        # Make sure we're targeting the correct realm
-        keycloak_admin.realm_name = KEYCLOAK_REALM
-        logger.info(f"Updating realm settings for: {keycloak_admin.realm_name}")
-        
-        # Get current realm settings
-        realm_info = keycloak_admin.get_realm(KEYCLOAK_REALM)
-        
-        # Enable user registration
-        realm_info["registrationAllowed"] = True
-        realm_info["loginWithEmailAllowed"] = True
-        realm_info["resetPasswordAllowed"] = True
-        realm_info["rememberMe"] = True
-        
-        # Update realm settings
-        keycloak_admin.update_realm(KEYCLOAK_REALM, realm_info)
-        logger.info(f"Realm settings updated successfully")
-        
-        return {
-            "success": True,
-            "message": "Realm settings updated successfully",
-            "realm": {
-                "name": KEYCLOAK_REALM,
-                "registration_allowed": realm_info.get("registrationAllowed", False),
-                "login_with_email_allowed": realm_info.get("loginWithEmailAllowed", False),
-                "reset_password_allowed": realm_info.get("resetPasswordAllowed", False),
-                "remember_me": realm_info.get("rememberMe", False),
-            }
-        }
-    except Exception as e:
-        logger.error(f"Error updating realm settings: {str(e)}")
-        return {"error": str(e)}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
