@@ -1,0 +1,22 @@
+.login-container {
+  max-width: 500px;
+  margin: 5rem auto;
+  padding: 2rem;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.login-button {
+  background-color: #4a6fa5;
+  color: white;
+  font-weight: 600;
+  padding: 0.8rem 2rem;
+  font-size: 1.1rem;
+  margin-top: 1rem;
+}
+
+.login-button:hover {
+  background-color: #3a5a80;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}

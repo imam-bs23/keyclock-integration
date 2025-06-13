@@ -1,13 +1,15 @@
 import logging
 import os
+import urllib
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from keycloak import KeycloakAdmin, KeycloakOpenID
-from keycloak.exceptions import KeycloakError
+from keycloak.exceptions import KeycloakAuthenticationError, KeycloakError
 from pydantic import BaseModel, EmailStr
 
 # Load environment variables from .env file
@@ -20,6 +22,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
 app = FastAPI(title="FastAPI Keycloak Auth", version="1.0.0")
+
+# app.mount("/", StaticFiles(directory="/app/frontend", html=True), name="static")
 
 # CORS middleware
 app.add_middleware(
@@ -129,6 +133,177 @@ class UserInfo(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(client_id: str, client_secret: str, redirect_uri: str):
+    """
+    Public login page for users. Client info passed in query string.
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Login with KUP</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            }}
+            body {{
+                background-color: #f5f5f5;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 20px;
+            }}
+            .login-container {{
+                background: white;
+                padding: 2.5rem;
+                border-radius: 10px;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+                width: 100%;
+                max-width: 400px;
+                text-align: center;
+            }}
+            h2 {{
+                color: #2c3e50;
+                margin-bottom: 1.5rem;
+                font-size: 1.8rem;
+            }}
+            .form-group {{
+                margin-bottom: 1.5rem;
+                text-align: left;
+            }}
+            .form-group label {{
+                display: block;
+                margin-bottom: 0.5rem;
+                color: #34495e;
+                font-weight: 500;
+            }}
+            input[type="text"],
+            input[type="password"] {{
+                width: 100%;
+                padding: 0.8rem 1rem;
+                font-size: 1rem;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                transition: border-color 0.3s, box-shadow 0.3s;
+            }}
+            input[type="text"]:focus,
+            input[type="password"]:focus {{
+                outline: none;
+                border-color: #015B96;
+                box-shadow: 0 0 0 3px rgba(1, 91, 150, 0.2);
+            }}
+            button[type="submit"] {{
+                width: 100%;
+                padding: 0.9rem;
+                background-color: #015B96;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 1rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: background-color 0.3s, transform 0.2s;
+            }}
+            button[type="submit"]:hover {{
+                background-color: #014a7a;
+                transform: translateY(-2px);
+            }}
+            .error-message {{
+                color: #e74c3c;
+                margin-top: 1rem;
+                font-size: 0.9rem;
+            }}
+            .logo {{
+                margin-bottom: 1.5rem;
+                font-size: 2rem;
+                font-weight: bold;
+                color: #2c3e50;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="login-container">
+            <div class="logo">KUP</div>
+            <h2>Welcome Back</h2>
+            <form action="/auth/login?client_id={client_id}&client_secret={client_secret}&redirect_uri={urllib.parse.quote(redirect_uri)}" method="post">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input id="username" name="username" type="text" placeholder="Enter your username" required autofocus/>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input id="password" name="password" type="password" placeholder="Enter your password" required/>
+                </div>
+                <button type="submit">Sign In</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.post("/auth/login")
+async def login_user(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    client_id: Optional[str] = None,
+    client_secret: Optional[str] = None,
+    redirect_uri: Optional[str] = None,
+):
+    """
+    Handle user login: authenticates against Keycloak and redirects with token info.
+    """
+    if not all([client_id, client_secret, redirect_uri]):
+        raise HTTPException(status_code=400, detail="Missing client_id, client_secret, or redirect_uri")
+
+    # Create dynamic Keycloak client
+    keycloak_openid = KeycloakOpenID(
+        server_url=KEYCLOAK_SERVER_URL,
+        realm_name=KEYCLOAK_REALM,
+        client_id=client_id,
+        client_secret_key=client_secret
+    )
+
+    try:
+        token_response = keycloak_openid.token(
+            grant_type="password",
+            username=username,
+            password=password,
+            scope="openid"
+        )
+        
+        userinfo = keycloak_openid.userinfo(token_response["access_token"])
+
+        print(f"User info: {userinfo}")
+
+        # You could generate an internal "auth_code" here, or just redirect with user info
+        params = {
+            "access_token": token_response["access_token"],
+            "expires_in": token_response["expires_in"],
+            "username": userinfo.get("preferred_username"),
+            "email": userinfo.get("email"),
+            "user_id": userinfo.get("sub")
+        }
+
+        print(f"Redirecting to: {redirect_uri}?{urllib.parse.urlencode(params)}")
+
+        redirect_url = f"{redirect_uri}?{urllib.parse.urlencode(params)}"
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
+
+    except KeycloakAuthenticationError:
+        return HTMLResponse("<h3>Login failed. Invalid credentials or client ID/secret.</h3>", status_code=401)
+    except Exception as e:
+        return HTMLResponse(f"<h3>Unexpected error: {str(e)}</h3>", status_code=500)
 
 @app.post("/api/auth/register", response_model=dict)
 async def register_user(user_data: UserRegistration):
