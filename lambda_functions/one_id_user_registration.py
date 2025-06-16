@@ -79,20 +79,24 @@ def validate_input(event: Dict[str, Any]) -> Dict[str, str]:
         raise ValueError(f"Invalid input: {str(e)}")
 
 def create_response(status_code: int, message: str, data: Optional[Dict] = None) -> Dict:
-    """Create a standardized API response."""
-    response = {
+    """Create a standardized API response.
+    
+    Args:
+        status_code: HTTP status code
+        message: Response message
+        data: Optional response data
+        
+    Returns:
+        Dict containing the API response with body as a JSON object
+    """
+    return {
         'statusCode': status_code,
-        'headers': {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*'
-        },
-        'body': json.dumps({
+        'body': {
             'success': 200 <= status_code < 300,
             'message': message,
             'data': data or {}
-        })
+        }
     }
-    return response
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
     """Handle user registration through AWS Lambda."""
