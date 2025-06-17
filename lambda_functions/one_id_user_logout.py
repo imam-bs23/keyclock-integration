@@ -53,11 +53,15 @@ def create_response(status_code: int, message: str, data: Optional[Dict] = None)
     """Create a standardized API response."""
     return {
         'statusCode': status_code,
-        'body': {
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+        },
+        'body': json.dumps({
             'success': 200 <= status_code < 300,
             'message': message,
             'data': data or {}
-        }
+        })
     }
 
 def validate_logout_input(event: Dict[str, Any]) -> Dict[str, str]:

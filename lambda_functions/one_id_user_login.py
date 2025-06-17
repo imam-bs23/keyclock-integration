@@ -14,8 +14,6 @@ logger.setLevel(logging.INFO)
 REQUIRED_ENV_VARS = [
     "KEYCLOAK_URL",
     "KEYCLOAK_REALM",
-    "KEYCLOAK_ADMIN_USERNAME",
-    "KEYCLOAK_ADMIN_PASSWORD",
     "KEYCLOAK_CLIENT_ID",
     "KEYCLOAK_CLIENT_SECRET"
 ]
@@ -28,8 +26,6 @@ for var in REQUIRED_ENV_VARS:
 # Keycloak configuration
 KEYCLOAK_SERVER_URL = os.environ["KEYCLOAK_URL"].rstrip('/') + "/"
 KEYCLOAK_REALM = os.environ["KEYCLOAK_REALM"]
-KEYCLOAK_ADMIN_USERNAME = os.environ["KEYCLOAK_ADMIN_USERNAME"]
-KEYCLOAK_ADMIN_PASSWORD = os.environ["KEYCLOAK_ADMIN_PASSWORD"]
 KEYCLOAK_CLIENT_ID = os.environ["KEYCLOAK_CLIENT_ID"]
 KEYCLOAK_CLIENT_SECRET = os.environ["KEYCLOAK_CLIENT_SECRET"]
 
@@ -81,11 +77,15 @@ def create_response(status_code: int, message: str, data: Optional[Dict] = None)
     """
     response = {
         'statusCode': status_code,
-        'body': {
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+        },
+        'body': json.dumps({
             'success': 200 <= status_code < 300,
             'message': message,
             'data': data or {}
-        }
+        })
     }
     return response
 

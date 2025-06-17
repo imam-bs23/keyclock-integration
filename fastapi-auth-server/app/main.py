@@ -4,7 +4,7 @@ import urllib
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBearer
@@ -99,12 +99,28 @@ except Exception as e:
 security = HTTPBearer()
 
 # Pydantic models
+from datetime import date
+
+from pydantic import validator
+
+
 class UserRegistration(BaseModel):
     username: str
     email: EmailStr
     password: str
     firstName: str
     lastName: str
+    dob: date  # Using date type for proper validation
+    
+    @validator('dob', pre=True)
+    def parse_dob(cls, value):
+        if isinstance(value, str):
+            try:
+                # Try to parse the date string in YYYY-MM-DD format
+                return date.fromisoformat(value)
+            except ValueError as e:
+                raise ValueError("Date must be in YYYY-MM-DD format") from e
+        return value
 
 class UserLogin(BaseModel):
     username: str
@@ -133,6 +149,153 @@ class UserInfo(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+
+import base64
+import hashlib
+import secrets
+import urllib.parse
+from urllib.parse import urlencode
+
+import httpx
+from fastapi.responses import RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET"),  # Change this in production
+    session_cookie="session",
+    max_age=3600  # 1 hour
+)
+
+# Add these endpoints to your FastAPI app
+
+@app.get("/auth/authorize")
+async def authorize_flow(
+    request: Request,
+    client_id: str,
+    state: Optional[str] = None,
+    code_challenge: Optional[str] = None,
+    code_challenge_method: Optional[str] = "S256",
+):
+    """
+    Initiate the authorization code flow.
+    This would typically be called from your frontend.
+    """
+    # Generate a secure random state if not provided
+    if not state:
+        state = secrets.token_urlsafe(32)
+    
+    # Store the state and code_verifier in the session
+    code_verifier = secrets.token_urlsafe(64)
+    request.session["oauth_state"] = state
+    request.session["code_verifier"] = code_verifier
+    
+    # If using PKCE, generate the code challenge
+    if code_challenge_method == "S256" and not code_challenge:
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().replace("=", "")
+    
+    # Build the authorization URL
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "redirect_uri": "http://0.0.0.0:3001/auth/callback",
+        "state": state,
+        "scope": "openid email profile",
+    }
+    
+    if code_challenge:
+        params.update({
+            "code_challenge": code_challenge,
+            "code_challenge_method": code_challenge_method
+        })
+    
+    auth_url = f"{KEYCLOAK_SERVER_URL}realms/{KEYCLOAK_REALM}/protocol/openid-connect/auth"
+    return RedirectResponse(f"{auth_url}?{urllib.parse.urlencode(params)}")
+
+@app.get("/auth/callback")
+async def callback(
+    request: Request,
+    code: str,
+    state: str,
+    session_state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    """
+    Handle the callback from Keycloak after user authentication.
+    """
+    logger.info(f"Callback received: code={code}, state={state}, session_state={session_state}, error={error}, error_description={error_description}")
+    # Verify state to prevent CSRF
+    stored_state = request.session.get("oauth_state")
+    if not stored_state or stored_state != state:
+        raise HTTPException(status_code=400, detail="Invalid state parameter")
+    
+    # Get the code verifier if using PKCE
+    code_verifier = request.session.pop("code_verifier", None)
+
+    logger.info(f"Stored state: {stored_state}, Provided state: {state}")
+    logger.info(f"Code verifier from session: {code_verifier}")
+    
+    # Exchange the authorization code for tokens
+    token_url = f"{KEYCLOAK_SERVER_URL}realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+    
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "http://0.0.0.0:3001/auth/callback",
+        "client_id": "testclient",
+        "code_verifier": code_verifier
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(token_url, data=data)
+    
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to exchange authorization code for tokens"
+        )
+    
+    tokens = response.json()
+    
+    # Get user info
+    userinfo_url = f"{KEYCLOAK_SERVER_URL}realms/{KEYCLOAK_REALM}/protocol/openid-connect/userinfo"
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+    
+    async with httpx.AsyncClient() as client:
+        userinfo_resp = await client.get(userinfo_url, headers=headers)
+    
+    if userinfo_resp.status_code != 200:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to fetch user info"
+        )
+    
+    userinfo = userinfo_resp.json()
+    
+    # Here you can create or update the user in your database
+    # user = await get_or_create_user(userinfo)
+    
+    # Set session or JWT token
+    # request.session["user_id"] = user.id
+    frontend_url = "http://localhost:3000/profile"
+    logger.info(f"userinfo: {userinfo}")
+    
+    token_data = {
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens.get("refresh_token"),
+        "id_token": tokens.get("id_token"),
+        "username": userinfo.get("preferred_username", ""),
+        "email": userinfo.get("email", ""),
+    }
+
+    # URL encode the token data
+    query_params = urlencode(token_data)
+    redirect_url = f"{frontend_url}?{query_params}"
+
+    return RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(client_id: str, client_secret: str, redirect_uri: str):
@@ -327,6 +490,9 @@ async def register_user(user_data: UserRegistration):
             logger.warning(f"Could not check for existing users: {str(e)}")
             # Continue with registration attempt
         
+        # Format the date in YYYY-MM-DD format for Keycloak
+        formatted_dob = user_data.dob.isoformat()
+        
         # Create user payload
         user_payload = {
             "username": user_data.username,
@@ -335,6 +501,9 @@ async def register_user(user_data: UserRegistration):
             "lastName": user_data.lastName,
             "enabled": True,
             "emailVerified": True,
+            "attributes": {
+                "dob": [formatted_dob],  # Store DOB as an array as per Keycloak's format
+            },
             "credentials": [{
                 "type": "password",
                 "value": user_data.password,
@@ -384,7 +553,7 @@ async def register_user(user_data: UserRegistration):
             detail="Internal server error during registration"
         )
 
-@app.post("/api/auth/login", response_model=TokenResponse)
+@app.post("/api/v1/login", response_model=TokenResponse)
 async def login_user(login_data: UserLogin):
     """Authenticate user and return JWT tokens"""
     logger.info(f"Login attempt for user: {login_data.username}")
@@ -484,7 +653,7 @@ async def refresh_token(refresh_data: RefreshTokenRequest):
             detail="Internal server error during token refresh"
         )
 
-@app.get("/api/auth/me", response_model=UserInfo)
+@app.get("/api/v1/me", response_model=UserInfo)
 async def get_user_profile(request: Request):
     auth_header = request.headers.get("Authorization")
     

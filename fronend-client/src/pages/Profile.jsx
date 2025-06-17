@@ -1,35 +1,41 @@
-import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
-import './Profile.css';
+import React, { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import "./Profile.css";
 
 const Profile = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const [userInfo, setUserInfo] = useState({
-    username: '',
-    email: '',
-    accessToken: ''
+    username: "",
+    email: "",
+    accessToken: "",
   });
 
   useEffect(() => {
-    const accessToken = searchParams.get('access_token');
-    const username = searchParams.get('username');
-    const email = searchParams.get('email');
+    const accessToken = searchParams.get("access_token");
+    const username = searchParams.get("username");
+    const email = searchParams.get("email");
+
+    console.log("Access Token:", accessToken);
+    console.log("Username:", username);
+    console.log("Email:", email);
 
     if (accessToken && username && email) {
       setUserInfo({ username, email, accessToken });
-      // Store the token in localStorage for future use
-      localStorage.setItem('accessToken', accessToken);
+      localStorage.setItem("accessToken", accessToken);
     } else {
-      // Redirect to login if no user info is found
-      navigate('/');
+      // Only redirect if we don't have a stored token
+      const storedToken = localStorage.getItem("accessToken");
+      if (!storedToken) {
+        navigate("/");
+      }
     }
   }, [searchParams, navigate]);
 
   const handleLogout = () => {
     // Clear user data and redirect to login
-    localStorage.removeItem('accessToken');
-    navigate('/');
+    localStorage.removeItem("accessToken");
+    navigate("/");
   };
 
   return (
@@ -37,11 +43,11 @@ const Profile = () => {
       <h1>Welcome to Website X</h1>
       <div className="user-info">
         <h3>Logged in!</h3>
-        <p><strong>Username:</strong> {userInfo.username}</p>
-        <p><strong>Email:</strong> {userInfo.email}</p>
-        <p className="token-display">
-          <strong>Access Token:</strong> 
-          <span className="token">{userInfo.accessToken}</span>
+        <p>
+          <strong>Username:</strong> {userInfo.username}
+        </p>
+        <p>
+          <strong>Email:</strong> {userInfo.email}
         </p>
         <button onClick={handleLogout} className="logout-button">
           Logout

@@ -2,23 +2,27 @@ import React from "react";
 import "./Login.css";
 
 const Login = () => {
-  const loginWithKUP = () => {
-    const KUP_AUTH_URL = "http://localhost:3001/login";
-    const CLIENT_ID = "myclient";
-    const CLIENT_SECRET = "2SseUT2bMZe5ArTVYDiKmYWUEKsIcPoQ";
-    const REDIRECT_URI = `${window.location.origin}/profile`;
+  const loginWithKUP = async () => {
+    // Generate a random state
+    const state = Math.random().toString(36).substring(2);
+    sessionStorage.setItem("oauth_state", state);
 
-    const url = `${KUP_AUTH_URL}?client_id=${CLIENT_ID}&client_secret=${CLIENT_SECRET}&redirect_uri=${encodeURIComponent(
-      REDIRECT_URI
-    )}`;
-    window.location.href = url;
+    // Redirect to the backend's authorize endpoint
+    const params = new URLSearchParams({
+      client_id: "testclient",
+      response_type: "code",
+      scope: "openid email profile",
+      state: state,
+      // Let the backend handle PKCE
+    });
+    window.location.href = `http://0.0.0.0:3001/auth/authorize?${params.toString()}`;
   };
 
   return (
     <div className="login-container">
       <h1>Welcome to Website X</h1>
       <button onClick={loginWithKUP} className="login-button">
-        Login with KUP
+        Login with ONEID
       </button>
     </div>
   );

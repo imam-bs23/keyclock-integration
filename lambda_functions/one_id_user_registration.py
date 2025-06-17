@@ -91,11 +91,15 @@ def create_response(status_code: int, message: str, data: Optional[Dict] = None)
     """
     return {
         'statusCode': status_code,
-        'body': {
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+        },
+        'body': json.dumps({
             'success': 200 <= status_code < 300,
             'message': message,
             'data': data or {}
-        }
+        })
     }
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
