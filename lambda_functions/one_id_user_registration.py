@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, Optional
 
 from keycloak import KeycloakAdmin
@@ -62,18 +63,24 @@ def validate_input(event: Dict[str, Any]) -> Dict[str, str]:
         if not isinstance(body, dict):
             raise ValueError("Request body must be a JSON object")
             
-        required_fields = ['username', 'email', 'password', 'firstName', 'lastName']
+        required_fields = ['email', 'password', 'firstName', 'lastName', 'phoneNumber']
         missing = [field for field in required_fields if not body.get(field)]
         
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
+        
+        # Validate phone number format
+        phoneNumber = str(body['phoneNumber']).strip()
+        phone_pattern = r'^\+?(88)?0?1[3456789][0-9]{8}\b'
+        if not re.match(phone_pattern, phoneNumber):
+            raise ValueError("Invalid phone number format. Must be a valid Bangladeshi phone number (e.g., 01712345678, +8801712345678, 8801712345678)")
             
         return {
-            'username': str(body['username']).strip(),
             'email': str(body['email']).strip().lower(),
             'password': str(body['password']),
             'firstName': str(body['firstName']).strip(),
-            'lastName': str(body['lastName']).strip()
+            'lastName': str(body['lastName']).strip(),
+            'phoneNumber': phoneNumber
         }
     except Exception as e:
         raise ValueError(f"Invalid input: {str(e)}")
@@ -115,21 +122,30 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
         
         # Check if user exists
         try:
-            existing_users = keycloak_admin.get_users({
-                'username': user_data['username'],
+            existing_users_email = keycloak_admin.get_users({
                 'email': user_data['email']
             })
+
+            existing_users_phone = keycloak_admin.get_users({
+                'attributes': {
+                    'phoneNumber': user_data['phoneNumber']
+                }
+            })
             
-            if existing_users:
-                logger.warning(f"User {user_data['username']} or email {user_data['email']} already exists")
-                return create_response(409, "User with this username or email already exists")
+            if existing_users_email:
+                logger.warning(f"User {user_data['email']} already exists")
+                return create_response(409, "User with this email already exists")
+            
+            if existing_users_phone:
+                logger.info(f"User from response {existing_users_phone} already exists")
+                logger.warning(f"User {user_data['phoneNumber']} already exists")
+                return create_response(409, "User with this phone number already exists")
                 
         except KeycloakError as e:
             logger.warning(f"Warning checking existing users: {str(e)}")
         
         # Create user
         user_payload = {
-            'username': user_data['username'],
             'email': user_data['email'],
             'firstName': user_data['firstName'],
             'lastName': user_data['lastName'],
@@ -139,11 +155,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
                 'type': 'password',
                 'value': user_data['password'],
                 'temporary': False
-            }]
+            }],
+            'attributes': {
+                'phoneNumber': user_data['phoneNumber']
+            }
         }
         
         user_id = keycloak_admin.create_user(user_payload)
-        logger.info(f"User {user_data['username']} created successfully with ID: {user_id}")
+        logger.info(f"User {user_data['email']} created successfully with ID: {user_id}")
         
         return create_response(201, "User registered successfully", {'userId': user_id})
         
@@ -155,8 +174,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
         error_msg = str(e).lower()
         logger.error(f"Keycloak error: {error_msg}")
         
-        if "user exists" in error_msg:
-            return create_response(409, "User with this username or email already exists")
+        if "user exists" in error_msg or "user with this email already exists" in error_msg or "user with this phone number already exists" in error_msg:
+            return create_response(409, "User with this email or phone number already exists")
         elif "forbidden" in error_msg or "403" in error_msg:
             return create_response(403, "Registration is not allowed. Please contact the administrator.")
         elif "connection" in error_msg or "can't connect" in error_msg:

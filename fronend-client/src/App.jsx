@@ -1,8 +1,13 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
-import Profile from './pages/Profile';
-import './App.css';
+import React from "react";
+import {
+  Navigate,
+  Route,
+  BrowserRouter as Router,
+  Routes,
+} from "react-router-dom";
+import "./App.css";
+import Login from "./pages/Login";
+import Profile from "./pages/Profile";
 
 function App() {
   return (

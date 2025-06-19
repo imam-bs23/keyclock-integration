@@ -93,22 +93,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict:
     try:
         # Get user info from Keycloak
         user_info = keycloak_openid.userinfo(token)
+        logger.info(f"User info from Keycloak: {user_info}")
         
         # Format the response data
         response_data = {
             'sub': user_info.get('sub', ''),
-            'username': user_info.get('preferred_username', ''),
             'email': user_info.get('email', ''),
             'firstName': user_info.get('given_name'),
             'lastName': user_info.get('family_name'),
             'emailVerified': user_info.get('email_verified', False),
-            'roles': user_info.get('realm_access', {}).get('roles', [])
+            'roles': user_info.get('realm_access', {}).get('roles', []),
+            'phoneNumber': user_info.get('attributes', {}).get('phoneNumber', '')
         }
         
         # Remove None values from response
         response_data = {k: v for k, v in response_data.items() if v is not None}
         
-        logger.info(f"Successfully retrieved user info for {response_data.get('username')}")
+        logger.info(f"Successfully retrieved user info for {response_data.get('email')}")
         logger.info(f"User info: {response_data}")
         return create_response(200, "User info retrieved successfully", response_data)
         

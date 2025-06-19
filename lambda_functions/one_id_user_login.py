@@ -143,7 +143,7 @@ def lambda_handler(event, context):
             grant_type="password",
             username=login_data['username'],
             password=login_data['password'],
-            scope="openid"
+            scope="openid profile email phoneNumber"
         )
         
         logger.info(f"User {login_data['username']} logged in successfully")
